@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import (Callable, Collection, Dict, Mapping, Optional, Tuple, Type,
-                    Union)
+                    Union, Any)
 from uuid import UUID
 
 _REGISTER_DECLARED_CLASS: Dict[str, type] = {}
@@ -15,9 +15,12 @@ class _MISSING_TYPE:
     def __str__(self):
         return "MISSING"
 
+    def __bool__(self):
+        return False
+
 
 MISSING = _MISSING_TYPE()
-Json = Union[dict, list, str, int, float, bool, None]
+Json: Type[Any] = Union[dict, list, str, int, float, bool, None]
 JsonData = Union[str, bytes, bytearray]
 
 
@@ -45,13 +48,14 @@ class _ExtendedEncoder(json.JSONEncoder):
 
 class Var:
 
-    def __init__(self, type_, field_name=MISSING, default=MISSING, default_factory=MISSING, ignore_serialize=False):
+    def __init__(self, type_, required=True, field_name=MISSING, default=MISSING, default_factory=MISSING, ignore_serialize=False):
         self._type = type_
         self.name = ""
         self._field_name = field_name
         self.default = default
         self.default_factory = default_factory
         self.ignore_serialize = ignore_serialize
+        self.required = required
 
     @property
     def field_name(self):
@@ -74,16 +78,21 @@ class Var:
         return field_value
 
     def check(self, obj):
-        # if issubclass(self.type_, Declared):
-        if not isinstance(obj, self.type_):
-            raise TypeError("%s is not a subclass of %s" % (type(obj), self.type_))
+        if obj is MISSING or obj is None:
+            return True
+        type_ = self.type_
+        if getattr(type_, "__origin__", None):
+            type_ = type_.__origin__
+
+        if not _isinstance_safe(obj, type_):
+            raise TypeError("%r is not a instance of %r" % (type(obj).__name__, self.type_.__name__))
         return True
 
 
-def var(type_, *, field_name=MISSING, default=MISSING, default_factory=MISSING, ignore_serialize=False):
+def var(type_, *, required=True, field_name=MISSING, default=MISSING, default_factory=MISSING, ignore_serialize=False):
     if default is not MISSING and default_factory is not MISSING:
         raise ValueError('cannot specify both default and default_factory')
-    return Var(type_, field_name, default, default_factory, ignore_serialize)
+    return Var(type_, required, field_name, default, default_factory, ignore_serialize)
 
 
 class BaseDeclared(type):
@@ -124,15 +133,33 @@ class Declared(metaclass=BaseDeclared):
 
     def __init__(self, *args, **kwargs):
         kwargs.update(dict(zip(self.fields, args)))
-        for name in self.fields:
-            field_value = kwargs.get(name, None)
-            if field_value is not None:
-                setattr(self, name, kwargs[name])
+        for field in fields(self):
+            field_value = kwargs.get(field.name, MISSING)
+            if field_value is not MISSING:
+                setattr(self, field.name, kwargs[field.name])
+            elif field.required:
+                raise AttributeError(f"field {field.name!r} is required")
 
     def __setattr__(self, name, value):
         if name in self.fields:
             self.meta["vars"][name].check(value)
         super().__setattr__(name, value)
+
+    def __getattr__(self, name):
+        try:
+            return self.__getattribute__(name)
+        except AttributeError as why:
+            try:
+                meta_var = self.meta["vars"][name]
+            except KeyError:
+                raise why
+            else:
+                value = meta_var.make_default()
+                if value is MISSING:
+                    raise why
+                else:
+                    super().__setattr__(name, value)
+                    return value
 
     def to_json(self,
                 *,
@@ -144,9 +171,10 @@ class Declared(metaclass=BaseDeclared):
                 separators: Tuple[str, str] = None,
                 default: Callable = None,
                 sort_keys: bool = False,
+                skip_none_field=False,
                 **kw):
         return json.dumps(
-            self.to_dict(encode_json=False),
+            self.to_dict(encode_json=False, skip_none_field=skip_none_field),
             cls=_ExtendedEncoder,
             skipkeys=skipkeys,
             ensure_ascii=ensure_ascii,
@@ -167,17 +195,18 @@ class Declared(metaclass=BaseDeclared):
                   parse_int=None,
                   parse_constant=None,
                   infer_missing=False,
+                  skip_none_field=False,
                   **kw):
         kvs = json.loads(
             s, encoding=encoding, parse_float=parse_float, parse_int=parse_int, parse_constant=parse_constant, **kw)
-        return cls.from_dict(kvs, infer_missing=infer_missing)
+        return cls.from_dict(kvs, infer_missing=infer_missing, skip_none_field=skip_none_field)
 
     @classmethod
-    def from_dict(cls: Type['Declared'], kvs: dict, *, infer_missing=False):
-        return _decode_declared_class(cls, kvs, infer_missing)
+    def from_dict(cls: Type['Declared'], kvs: dict, *, skip_none_field=False, infer_missing=False):
+        return _decode_declared_class(cls, kvs, skip_none_field, infer_missing)
 
-    def to_dict(self, encode_json=False, use_strict=True):
-        return _asdict(self, encode_json=encode_json, use_strict=use_strict)
+    def to_dict(self, encode_json=False, skip_none_field=False):
+        return _asdict(self, encode_json=encode_json, skip_none_field=skip_none_field)
 
     def __str__(self):
         args = [f"{var.name}={str(getattr(self, var.name, 'missing'))}" for _, var in self.meta["vars"].items()]
@@ -242,24 +271,33 @@ def _is_new_type(type_):
     return inspect.isfunction(type_) and hasattr(type_, "__supertype__")
 
 
-def _decode_declared_class(cls: Type[Declared], kvs: dict, infer_missing: bool):
+def _decode_declared_class(cls: Type[Declared], kvs: dict, skip_none_field: bool, infer_missing: bool):
     if isinstance(kvs, cls):
         return kvs
 
+    if not kvs:
+        if _issubclass_safe(cls, Declared):
+            return cls.__new__(cls)
+        return cls()
+
     init_kwargs = {}
+    has_skip = False
     for field in fields(cls):
         if field.ignore_serialize:
+            has_skip = True
             continue
 
         field_value = kvs.get(field.field_name, MISSING)
         if field_value is MISSING:
             field_value = field.make_default()
-
-        if field_value is MISSING:
-            continue
+            if field_value is MISSING and field.required and not skip_none_field:
+                raise AttributeError(f"field {field.name!r} is required")
+            else:
+                has_skip = True
+                continue
 
         if _issubclass_safe(field.type_, Declared):
-            value = _decode_declared_class(field.type_, field_value, infer_missing)
+            value = _decode_declared_class(field.type_, field_value, skip_none_field, infer_missing)
         elif _issubclass_safe(field.type_, Decimal):
             value = field_value if isinstance(field_value, Decimal) else Decimal(field_value)
         elif _issubclass_safe(field.type_, UUID):
@@ -275,6 +313,12 @@ def _decode_declared_class(cls: Type[Declared], kvs: dict, infer_missing: bool):
             value = field_value
 
         init_kwargs[field.name] = value
+
+    if has_skip and skip_none_field:
+        inst = cls.__new__(cls)
+        for k, v in init_kwargs.items():
+            setattr(inst, k, v)
+        return inst
     return cls(**init_kwargs)
 
 
@@ -284,7 +328,6 @@ def _is_declared_instance(obj):
 
 def fields(class_or_instance):
     """Return a tuple describing the fields of this dataclass.
-
     Accepts a dataclass or an instance of one. Tuple elements are of
     type Field.
     """
@@ -334,7 +377,7 @@ def _user_overrides(cls):
     return overrides
 
 
-def _asdict(obj, encode_json=False, use_strict=True):
+def _asdict(obj, encode_json=False, skip_none_field=False):
     if _is_declared_instance(obj):
         result = []
         field: Var
@@ -346,12 +389,13 @@ def _asdict(obj, encode_json=False, use_strict=True):
             if field_value is MISSING:
                 field_value = field.make_default()
                 if field_value is MISSING:
-                    if use_strict:
-                        raise AttributeError(f"{type(obj).__name__!r} object has no attribute {field.name!r}")
-                    else:
+                    if not field.required or skip_none_field:
                         continue
+                    else:
+                        # raise AttributeError(f"{type(obj).__name__!r} object has no attribute {field.name!r}")
+                        field_value = None
 
-            value = _asdict(field_value, encode_json=encode_json, use_strict=use_strict)
+            value = _asdict(field_value, encode_json=encode_json, skip_none_field=skip_none_field)
             result.append((field.field_name, value))
         return _encode_overrides(dict(result), None, encode_json=encode_json)
     elif isinstance(obj, Mapping):
