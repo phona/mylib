@@ -1,22 +1,20 @@
 import copy
-import json
 import inspect
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
-from typing import (Callable, Collection, Dict, Mapping, Optional, Tuple, Type,
-                    Union, Any)
+from typing import (Any, Callable, Collection, Dict, Mapping, Optional, Tuple,
+                    Type, Union)
 from uuid import UUID
 
 _REGISTER_DECLARED_CLASS: Dict[str, type] = {}
 
 
 class _MISSING_TYPE:
+
     def __str__(self):
         return "MISSING"
-
-    def __bool__(self):
-        return False
 
 
 MISSING = _MISSING_TYPE()
@@ -47,8 +45,18 @@ class _ExtendedEncoder(json.JSONEncoder):
 
 
 class Var:
+    """ a represantation of declared class member varaiable
 
-    def __init__(self, type_, required=True, field_name=MISSING, default=MISSING, default_factory=MISSING, ignore_serialize=False):
+    recommend use var function to create Var object, don't use this construct directly
+    """
+
+    def __init__(self,
+                 type_,
+                 required=True,
+                 field_name=MISSING,
+                 default=MISSING,
+                 default_factory=MISSING,
+                 ignore_serialize=False):
         self._type = type_
         self.name = ""
         self._field_name = field_name
@@ -75,7 +83,10 @@ class Var:
             field_value = self.default
         elif self.default_factory is not MISSING:
             field_value = self.default_factory()
-        return field_value
+
+        if self.check(field_value):
+            return field_value
+        return MISSING
 
     def check(self, obj):
         if obj is MISSING or obj is None:
@@ -89,7 +100,26 @@ class Var:
         return True
 
 
-def var(type_, *, required=True, field_name=MISSING, default=MISSING, default_factory=MISSING, ignore_serialize=False):
+def var(type_, required=True, field_name=MISSING, default=MISSING, default_factory=MISSING, ignore_serialize=False):
+    """ check input arguments and create a Var object
+
+    Usage:
+        >>> class NewClass(Declared):
+        >>>     new_field = var(int)
+        >>>     another_new_field = var(str, field_name="anf")
+
+    :param type_: a type object, or a str object that express one class of imported or declared in later,
+                  if use not declared or not imported class by string, a TypeError will occur in object
+                  construct or set attribute to those objects.
+    :param required: a bool object, constructor, contruct from_dict method or construct from_json method
+                     can't be missing when it is True, besides it will be ommit in to_json method.
+    :param field_name: a str object, use to serialize or deserialize custom field name.
+    :param default: a Type[A] object, raise AttributeError when this field leak user input value but
+                    this value is not instance of Type.
+    :param default_factory: a callable object that can return a Type[A] object, as same as default parameter
+                            but it is more flexible.
+    :param ignore_serialize: a bool object, if it is True then will omit in serialize.
+    """
     if default is not MISSING and default_factory is not MISSING:
         raise ValueError('cannot specify both default and default_factory')
     return Var(type_, required, field_name, default, default_factory, ignore_serialize)
@@ -130,6 +160,12 @@ class BaseDeclared(type):
 
 
 class Declared(metaclass=BaseDeclared):
+    """ declared a serialize object make data class more clearly and flexible, provide
+    default serialize function and well behavior hash, str and eq.
+
+    fields can use None object represent null or empty situation, otherwise those fields
+    must be provided unless set it required as False.
+    """
 
     def __init__(self, *args, **kwargs):
         kwargs.update(dict(zip(self.fields, args)))
@@ -207,6 +243,27 @@ class Declared(metaclass=BaseDeclared):
 
     def to_dict(self, encode_json=False, skip_none_field=False):
         return _asdict(self, encode_json=encode_json, skip_none_field=skip_none_field)
+
+    @classmethod
+    def from_form_data(cls: Type['Declared'], form_data, skip_none_field=False):
+        return cls.from_dict(dict(d.split("=") for d in form_data.split("&")), skip_none_field=skip_none_field)
+
+    def to_form_data(self, skip_none_field=False):
+        dct = {field.name: getattr(field, MISSING) for field in fields(self)}
+        for f in fields(self):
+            field_value = getattr(f, MISSING)
+            if field_value is MISSING and not skip_none_field:
+                dct[f.field_name] = ""
+            else:
+                dct[f.field_name] = field_value
+        return "&".join([f"{k}={v}" for k, v in dct])
+
+    @classmethod
+    def from_xml(cls: Type['Declared'], xml_data, skip_none_field=False):
+        raise NotImplementedError
+
+    def to_xml(self, skip_none_field=False):
+        raise NotImplementedError
 
     def __str__(self):
         args = [f"{var.name}={str(getattr(self, var.name, 'missing'))}" for _, var in self.meta["vars"].items()]
@@ -327,8 +384,8 @@ def _is_declared_instance(obj):
 
 
 def fields(class_or_instance):
-    """Return a tuple describing the fields of this dataclass.
-    Accepts a dataclass or an instance of one. Tuple elements are of
+    """Return a tuple describing the fields of this declared class.
+    Accepts a declared class or an instance of one. Tuple elements are of
     type Field.
     """
     # Might it be worth caching this, per class?
@@ -337,7 +394,7 @@ def fields(class_or_instance):
         meta = getattr(class_or_instance, "meta")
         meta_vars = meta["vars"]
     except AttributeError or KeyError:
-        raise TypeError('must be called with a dataclass type or instance')
+        raise TypeError('must be called with a declared type or instance')
 
     # Exclude pseudo-fields.  Note that fields is sorted by insertion
     # order, so the order of the tuple is as the fields were defined.
