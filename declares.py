@@ -148,19 +148,27 @@ class BaseDeclared(type):
 
         fields = []
         meta_vars = {}
-        for key in list(attrs.keys()):
-            if isinstance(attrs[key], Var):
-                fields.append(key)
-                var = attrs.pop(key)
-                var.name = key
-                meta_vars[key] = var
-
         for base in bases:
             meta = getattr(base, "meta", None)
             if meta:
                 base_meta_vars = meta.get("vars", {})
                 meta_vars.update(base_meta_vars)
                 fields.extend(base_meta_vars.keys())
+
+            for k, v in base.__dict__.items():
+                if _isinstance_safe(v, Var):
+                    fields.append(k)
+                    var = v
+                    var.name = k
+                    meta_vars[k] = var
+
+        for key in list(attrs.keys()):
+            if isinstance(attrs[key], Var):
+                if key not in fields:
+                    fields.append(key)
+                var = attrs.pop(key)
+                var.name = key
+                meta_vars[key] = var
 
         meta = {"vars": meta_vars}
         new_cls = super(BaseDeclared, cls).__new__(cls, name, bases, attrs)
@@ -190,15 +198,15 @@ class Declared(metaclass=BaseDeclared):
             # set `init` to False but `required` is True, that mean is this variable must be init in later
             # otherwise seiralize will be failed.
             # `init` just tell Declared class use custom initializer instead of default initializer.
-            if not field.init:
-                continue
             if field_value is MISSING:
+                if not field.init:
+                    continue
                 field_value = field.make_default()
                 if field_value is MISSING:
                     raise AttributeError(
                         f"field {field.name!r} is required. if you doesn't want to init this variable in initializer, "
                         f"please set `init` argument to False for this variable.")
-            setattr(self, field.name, field_value)
+            super().__setattr__(field.name, field_value)
 
         self.__post_init__()
 
@@ -215,11 +223,11 @@ class Declared(metaclass=BaseDeclared):
             result = self.__getattribute__(name)
             if result is MISSING:
                 return None
-        except AttributeError:
+        except AttributeError as why:
             try:
                 meta_var = self.meta["vars"][name]
             except KeyError:
-                return None
+                raise why
             else:
                 value = meta_var.make_default()
                 if value is MISSING:
@@ -299,7 +307,7 @@ class Declared(metaclass=BaseDeclared):
         if self.has_nest_declared_class():
             raise ValueError("can't serialize with nested declared class.")
 
-        return "&".join([f"{k}={v}" for k, v in self.to_dict(skip_none_field=skip_none_field)])
+        return "&".join([f"{k}={v}" for k, v in self.to_dict(skip_none_field=skip_none_field).items()])
 
     @classmethod
     def from_xml(cls: Type['Declared'], xml_data, skip_none_field=False):

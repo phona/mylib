@@ -1,0 +1,45 @@
+FROM ubuntu:latest
+
+LABEL maintainer="HeWeiTao <675428202@qq.com>"
+ENV USER heweitao
+
+RUN apt-get update && \
+# install develop tools
+apt-get install -y \
+sudo curl jq openssh-server git ssh subversion gnupg net-tools vim zip apt-utils linuxbrew-wrapper autojump locales zsh wget fonts-powerline tree openssl language-pack-zh-hans \
+# python3
+python3 python3-all python3-all-dev python3-pip python3-setuptools && \
+locale-gen zh_CN.UTF-8 && \
+# node
+curl -sL https://deb.nodesource.com/setup_10.x | sudo -E bash - && \
+apt-get install -y nodejs && \
+# initialize user
+adduser --quiet --disabled-password --shell /bin/zsh --home /home/${USER} --gecos "User" ${USER} && \
+echo "${USER}:123456" | chpasswd &&  usermod -aG sudo ${USER} \
+&& apt-get clean \
+&& apt-get autoclean \
+&& apt-get -y autoremove \
+&& rm -rf /root/.npm/cache/* \
+&& rm -rf /root/.composer/cache/* \
+&& rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# initialize develop environment
+# install zsh plugins
+USER ${USER}
+WORKDIR /home/${USER}
+RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)" "" --unattended 
+RUN git clone https://github.com/zsh-users/zsh-syntax-highlighting.git && \
+echo "source /home/${USER}/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" >> /home/${USER}/.zshrc && \
+git clone https://github.com/zsh-users/zsh-autosuggestions && \
+echo "source /home/${USER}/zsh-autosuggestions/zsh-autosuggestions.zsh" >> /home/${USER}/.zshrc && \
+cp /usr/share/autojump/autojump.zsh ~ && \
+chown +x ~/autojump.zsh && \
+echo "source /home/${USER}/autojump.zsh" >> /home/${USER}/.zshrc
+
+# open sshd
+USER root
+RUN mkdir /var/run/sshd
+RUN sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+RUN sed 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D"]
