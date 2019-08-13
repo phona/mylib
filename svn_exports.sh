@@ -9,7 +9,7 @@ repos=(
 	UBOX_SPORTS
 )
 
-for repo in $repos; do
+for repo in ${repos[@]}; do
 	if [[ ! -d ${repo} ]]; then
 		mkdir -p $repo;
 		for branch in $(svn ls "${base_url}/${repo}"); do
