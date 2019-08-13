@@ -429,13 +429,13 @@ class CombineDeclaredTestCase(unittest.TestCase):
 class InheritedDeclaredTestCase(unittest.TestCase):
 
     def test_str(self):
-        json_obj = InheritedJSONTestClass(100, 1, 1.2, b"123", "123", True, [1, 2, 3], {"a": 1}, 10, 11)
+        json_obj = InheritedJSONTestClass(1, 1.2, b"123", "123", True, [1, 2, 3], {"a": 1}, 10, 11, 100)
         self.assertEqual(
             str(json_obj),
-            "InheritedJSONTestClass(iia=100,a=1,b=1.2,c=b'123',d=123,e=True,f=[1, 2, 3],g={'a': 1},ia=10,ib=11)")
+            "InheritedJSONTestClass(a=1,b=1.2,c=b'123',d=123,e=True,f=[1, 2, 3],g={'a': 1},ia=10,ib=11,iia=100)")
 
     def test_to_dict(self):
-        json_obj = InheritedJSONTestClass(100, 1, 1.2, b"123", "123", True, [1, 2, 3], {"a": 1}, 10, 11)
+        json_obj = InheritedJSONTestClass(1, 1.2, b"123", "123", True, [1, 2, 3], {"a": 1}, 10, 11, 100)
         self.assertEqual(
             json_obj.to_dict(), {
                 "iia": 100,
@@ -453,10 +453,10 @@ class InheritedDeclaredTestCase(unittest.TestCase):
             })
 
     def test_to_json(self):
-        json_obj = InheritedJSONTestClass(100, 1, 1.2, b"123", "123", True, [1, 2, 3], {"a": 1}, 10, 11)
+        json_obj = InheritedJSONTestClass(1, 1.2, b"123", "123", True, [1, 2, 3], {"a": 1}, 10, 11, 100)
         self.assertEqual(
             json_obj.to_json(),
-            "{\"iia\": 100, \"a\": 1, \"b\": 1.2, \"c\": [49, 50, 51], \"d\": \"123\", \"e\": true, \"f\": [1, 2, 3], \"g\": {\"a\": 1}, \"ia\": 10, \"ib\": 11}"
+            "{\"a\": 1, \"b\": 1.2, \"c\": [49, 50, 51], \"d\": \"123\", \"e\": true, \"f\": [1, 2, 3], \"g\": {\"a\": 1}, \"ia\": 10, \"ib\": 11, \"iia\": 100}"
         )
 
     def test_from_dict(self):
@@ -477,7 +477,7 @@ class InheritedDeclaredTestCase(unittest.TestCase):
         json_obj = InheritedJSONTestClass.from_dict(dct)
         self.assertEqual(
             str(json_obj),
-            "InheritedJSONTestClass(iia=100,a=1,b=1.2,c=b'123',d=123,e=True,f=[1, 2, 3],g={'a': 1},ia=10,ib=11)")
+            "InheritedJSONTestClass(a=1,b=1.2,c=b'123',d=123,e=True,f=[1, 2, 3],g={'a': 1},ia=10,ib=11,iia=100)")
 
     def test_hash(self):
         dct_1 = {
@@ -578,7 +578,6 @@ class SimpleDeclaredTestCase(unittest.TestCase):
         })
         json_obj_1 = ITestJsonClass(a=1, b=1, c=2)
         self.assertRaises(AttributeError, JSONTestClass, a=1, b=1.2, f=[1, 2, 3])
-        self.assertRaises(TypeError, JSONTestClass, 1.2)
         self.assertEqual(json_obj_1.to_dict(skip_none_field=True), {"a": 1, "b": 1, "c": 2})
         self.assertEqual(json_obj_1.to_dict(), {"a": 1, "b": 1, "c": 2})
 

@@ -1,9 +1,12 @@
+import re
 import copy
 import inspect
 import json
+from xml.etree import ElementTree as ET
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
+import urllib.parse as urlparse
 from typing import (Any, Callable, Collection, Dict, Mapping, Optional, Tuple, Type, Union)
 from uuid import UUID
 
@@ -17,8 +20,19 @@ class _MISSING_TYPE:
 
 
 MISSING = _MISSING_TYPE()
+CDATA_PATTERN = re.compile(r"<!\[CDATA\[(.*?)\]\]>")
 Json: Type[Any] = Union[dict, list, str, int, float, bool, None]
 JsonData = Union[str, bytes, bytearray]
+
+
+def custom_escape_cdata(text):
+    if CDATA_PATTERN.match(text):
+        return text
+    return ET_escape_cdata(text)
+
+
+ET_escape_cdata = ET._escape_cdata
+ET._escape_cdata = custom_escape_cdata
 
 
 class _ExtendedEncoder(json.JSONEncoder):
@@ -41,6 +55,73 @@ class _ExtendedEncoder(json.JSONEncoder):
         else:
             result = json.JSONEncoder.default(self, o)
         return result
+
+
+class XmlListConfig(list):
+
+    def __init__(self, aList):
+        for element in aList:
+            self.append(XmlDictConfig(element))
+
+
+class XmlDictConfig(dict):
+    """
+    Example usage:
+
+    >>> tree = ET.parse('your_file.xml')
+    >>> root = tree.getroot()
+    >>> xmldict = XmlDictConfig(root)
+
+    Or, if you want to use an XML string:
+
+    >>> root = ET.XML("xml_string")
+    >>> xmldict = XmlDictConfig(root)
+
+    And then use xmldict for what it is... a dict.
+    """
+
+    empty_dict = {}
+
+    @classmethod
+    def from_xml_string(cls, string):
+        return cls(ET.XML(string))
+
+    def __init__(self, parent_element: ET.Element):
+        if parent_element.items():
+            self.update(dict(parent_element.items()))
+        for element in parent_element:
+            if element:
+                # treat like dict - we assume that if the first two tags
+                # in a series are different, then they are all different.
+                if len(element) == 1 or element[0].tag != element[1].tag:
+                    aDict = XmlDictConfig(element)
+                    self.update({element.tag: aDict})
+                # treat like list - we assume that if the first two tags
+                # in a series are the same, then the rest are the same.
+                else:
+                    # here, we put the list in dictionary; the key is the
+                    # tag name the list elements all share in common, and
+                    # the value is the list itself
+                    self[element.tag] = XmlListConfig(element)
+                # if the tag has attributes, add those to the dict
+                if element.items():
+                    aDict.update(dict(element.items()))
+                    self.update({element.tag: aDict})
+            # this assumes that if you've got an attribute in a tag,
+            # you won't be having any text. This may or may not be a
+            # good idea -- time will tell. It works for the way we are
+            # currently doing XML configuration files...
+            elif element.items():
+                self.update({element.tag: dict(element.items())})
+            # finally, if there are no child tags and no attributes, extract
+            # the text
+            else:
+                if element.text is not None and element.text.startswith("<!"):
+                    result = CDATA_PATTERN.search(element.text)
+                    if result is not None:
+                        text = result.group(1)
+                        self.update({element.tag: text})
+                self.update({element.tag: element.text})
 
 
 class Var:
@@ -193,14 +274,15 @@ class Declared(metaclass=BaseDeclared):
         kwargs.update(dict(zip(self.fields, args)))
         fs = fields(self)
         for field in fs:
-            field_value = kwargs.get(field.name, MISSING)
-
             # set `init` to False but `required` is True, that mean is this variable must be init in later
             # otherwise seiralize will be failed.
             # `init` just tell Declared class use custom initializer instead of default initializer.
+            if not field.init:
+                continue
+
+            field_value = kwargs.get(field.name, MISSING)
+
             if field_value is MISSING:
-                if not field.init:
-                    continue
                 field_value = field.make_default()
                 if field_value is MISSING:
                     raise AttributeError(
@@ -283,25 +365,24 @@ class Declared(metaclass=BaseDeclared):
                   parse_int=None,
                   parse_constant=None,
                   infer_missing=False,
-                  skip_none_field=False,
                   **kw):
         kvs = json.loads(
             s, encoding=encoding, parse_float=parse_float, parse_int=parse_int, parse_constant=parse_constant, **kw)
-        return cls.from_dict(kvs, infer_missing=infer_missing, skip_none_field=skip_none_field)
+        return cls.from_dict(kvs, infer_missing=infer_missing)
 
     @classmethod
-    def from_dict(cls: Type['Declared'], kvs: dict, *, skip_none_field=False, infer_missing=False):
-        return _decode_declared_class(cls, kvs, skip_none_field, infer_missing)
+    def from_dict(cls: Type['Declared'], kvs: dict, *, infer_missing=False):
+        return _decode_declared_class(cls, kvs, infer_missing)
 
     def to_dict(self, encode_json=False, skip_none_field=False):
         return _asdict(self, encode_json=encode_json, skip_none_field=skip_none_field)
 
     @classmethod
-    def from_form_data(cls: Type['Declared'], form_data, skip_none_field=False):
+    def from_form_data(cls: Type['Declared'], form_data):
         if cls.has_nest_declared_class():
             raise ValueError("can't deserialize to nested declared class.")
 
-        return cls.from_dict(dict(d.split("=") for d in form_data.split("&")), skip_none_field=skip_none_field)
+        return cls.from_dict(dict(d.split("=") for d in form_data.split("&")))
 
     def to_form_data(self, skip_none_field=False):
         if self.has_nest_declared_class():
@@ -310,7 +391,32 @@ class Declared(metaclass=BaseDeclared):
         return "&".join([f"{k}={v}" for k, v in self.to_dict(skip_none_field=skip_none_field).items()])
 
     @classmethod
-    def from_xml(cls: Type['Declared'], xml_data, skip_none_field=False):
+    def from_query_string(cls: Type['Declared'], query_string: str):
+        if cls.has_nest_declared_class():
+            raise ValueError("can't deserialize to nested declared class.")
+
+        return cls.from_dict(dict(d.split("=") for d in urlparse.unquote(query_string).split("&")))
+
+    def to_query_string(self,
+                        skip_none_field=False,
+                        doseq=False,
+                        safe='',
+                        encoding=None,
+                        errors=None,
+                        quote_via=urlparse.quote_plus):
+        if self.has_nest_declared_class():
+            raise ValueError("can't deserialize to nested declared class.")
+
+        return urlparse.urlencode(
+            self.to_dict(skip_none_field=skip_none_field),
+            doseq=doseq,
+            safe=safe,
+            encoding=encoding,
+            errors=errors,
+            quote_via=quote_via)
+
+    @classmethod
+    def from_xml(cls: Type['Declared'], xml_data):
         raise NotImplementedError
 
     def to_xml(self, skip_none_field=False):
@@ -379,7 +485,7 @@ def _is_new_type(type_):
     return inspect.isfunction(type_) and hasattr(type_, "__supertype__")
 
 
-def _decode_declared_class(cls: Type[Declared], kvs: dict, skip_none_field: bool, infer_missing: bool):
+def _decode_declared_class(cls: Type[Declared], kvs: dict, infer_missing: bool):
     if _isinstance_safe(kvs, cls):
         return kvs
 
@@ -393,11 +499,9 @@ def _decode_declared_class(cls: Type[Declared], kvs: dict, skip_none_field: bool
         field_value = kvs.get(field.field_name, MISSING)
         if field_value is MISSING:
             field_value = field.make_default()
-            if field_value is MISSING and skip_none_field:
-                field_value = None
             value = field_value
         elif _issubclass_safe(field.type_, Declared):
-            value = _decode_declared_class(field.type_, field_value, skip_none_field, infer_missing)
+            value = _decode_declared_class(field.type_, field_value, infer_missing)
         elif _issubclass_safe(field.type_, Decimal):
             value = field_value if isinstance(field_value, Decimal) else Decimal(field_value)
         elif _issubclass_safe(field.type_, UUID):
@@ -501,3 +605,50 @@ def _asdict(obj, encode_json=False, skip_none_field=False):
         return list(_asdict(v, encode_json=encode_json) for v in obj)
     else:
         return copy.deepcopy(obj)
+
+
+def dict2XmlElem(obj: dict, custom_root: ET.Element = None):
+    """
+    {
+        "elem":
+            {
+                "text": "",
+                "attr1": "",
+                "attr2": "",
+                "child1": {...attributes}
+                ...other elem
+            }
+        ...other elem
+    }
+    Arguments:
+    - custom_root allows you to specify a custom root element
+        default is root
+    :return:
+    """
+    if not custom_root:
+        custom_root = ET.Element("body")
+
+    for k in obj:
+        if isinstance(obj[k], dict):
+            elem = _convert(k, obj[k])
+            custom_root.append(elem)
+    return custom_root
+
+
+def _convert(key, obj):
+    if not isinstance(obj, dict):
+        raise TypeError('Only support dict type as element\'s attribute: %s (%s)' % (obj, type(obj).__name__))
+
+    elem = ET.Element(key)
+    for sub_key in obj:
+        # update attributes
+        if obj[sub_key] is None:
+            pass
+        if sub_key == "text":
+            elem.text = obj[sub_key]
+        elif not isinstance(obj[sub_key], dict):
+            elem.set(sub_key, str(obj[sub_key]))
+        else:
+            sub_elem = _convert(sub_key, obj[sub_key])
+            elem.append(sub_elem)
+    return elem
