@@ -1,7 +1,50 @@
 import unittest
 from datetime import datetime, timezone
 
-from declares import var, Declared
+from declares import var, Declared, NamingStyle
+
+
+class NamingStyleTestCase(unittest.TestCase):
+
+    def test_snake_case(self):
+
+        class Klass(Declared):
+            test_var_a = var(int)
+
+        struct = Klass(1)
+        self.assertEqual(struct.to_dict(), {"test_var_a": 1})
+
+        class Klass1(Declared):
+            testVarB = var(int)
+
+        struct = Klass1(1)
+        self.assertEqual(struct.to_dict(), {"test_var_b": 1})
+
+        class Klass3(Declared):
+            TestVarD = var(int)
+
+        struct = Klass3(1)
+        self.assertEqual(struct.to_dict(), {"test_var_d": 1})
+
+    def test_camel_case(self):
+
+        class Klass(Declared):
+            test_var_a = var(int, naming_style=NamingStyle.camelcase)
+
+        struct = Klass(1)
+        self.assertEqual(struct.to_dict(), {"testVarA": 1})
+
+        class Klass1(Declared):
+            testVarB = var(int, naming_style=NamingStyle.camelcase)
+
+        struct = Klass(1)
+        self.assertEqual(struct.to_dict(), {"testVarA": 1})
+
+        class Klass3(Declared):
+            TestVarD = var(int, naming_style=NamingStyle.camelcase)
+
+        struct = Klass(1)
+        self.assertEqual(struct.to_dict(), {"testVarA": 1})
 
 
 class VarTestCase(unittest.TestCase):

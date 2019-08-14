@@ -124,6 +124,27 @@ class XmlDictConfig(dict):
                 self.update({element.tag: element.text})
 
 
+class NamingStyle:
+    """ reference to python-stringcase
+
+    https://github.com/okunishinishi/python-stringcase
+    """
+
+    @classmethod
+    def camelcase(cls, string):
+        string = re.sub(r"^[\-_\.]", '', str(string))
+        if not string:
+            return string
+        return string[0].lower() + re.sub(r"[\-_\.\s]([a-z])", lambda matched: (matched.group(1)).upper(), string[1:])
+
+    @classmethod
+    def snakecase(cls, string):
+        string = re.sub(r"[\-\.\s]", '_', str(string))
+        if not string:
+            return string
+        return string[0].lower() + re.sub(r"[A-Z]", lambda matched: '_' + (matched.group(0)).lower(), string[1:])
+
+
 class Var:
     """ a represantation of declared class member varaiable
     recommend use var function to create Var object, don't use this construct directly
@@ -136,6 +157,7 @@ class Var:
                  default=MISSING,
                  default_factory=MISSING,
                  ignore_serialize=False,
+                 naming_style=NamingStyle.snakecase,
                  init=True):
         self._type = type_
         self.name = ""
@@ -145,11 +167,13 @@ class Var:
         self.required = required
         self.init = init
         self.ignore_serialize = ignore_serialize
+        self.naming_style = naming_style
 
     @property
     def field_name(self):
+        """ Cache handled field raw name """
         if self._field_name is MISSING:
-            return self.name
+            self._field_name = self.naming_style(self.name)
         return self._field_name
 
     @property
@@ -181,12 +205,19 @@ class Var:
         return True
 
 
+class ListVar(Var):
+    """ represant a series of vars
+    """
+    pass
+
+
 def var(type_,
         required=True,
         field_name=MISSING,
         default=MISSING,
         default_factory=MISSING,
         ignore_serialize=False,
+        naming_style=NamingStyle.snakecase,
         init=True):
     """ check input arguments and create a Var object
 
@@ -218,7 +249,9 @@ def var(type_,
     """
     if default is not MISSING and default_factory is not MISSING:
         raise ValueError('cannot specify both default and default_factory')
-    return Var(type_, required, field_name, default, default_factory, ignore_serialize, init)
+    if _isinstance_safe(naming_style, NamingStyle):
+        raise TypeError(f'{type(naming_style)!r} is not instance of {NamingStyle!r}.')
+    return Var(type_, required, field_name, default, default_factory, ignore_serialize, naming_style, init)
 
 
 class BaseDeclared(type):
@@ -417,9 +450,28 @@ class Declared(metaclass=BaseDeclared):
 
     @classmethod
     def from_xml(cls: Type['Declared'], xml_data):
+        """
+        >>> class Struct(Declared):
+        >>>     tag = var(str)
+        >>>     text = var(str)
+        >>>     children = var(str)
+        >>>
+        >>>     # attrs
+        >>>     id = var(str)
+        >>>     style = var(str)
+        >>>     ......
+        """
+        # TODO
         raise NotImplementedError
 
     def to_xml(self, skip_none_field=False):
+        """
+        <?xml version="1.0"?>
+        <tag id="`id`" style="`style`">
+            `text`
+        </tag>
+        """
+        # TODO
         raise NotImplementedError
 
     def __str__(self):
