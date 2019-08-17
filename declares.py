@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 import urllib.parse as urlparse
+from collections import UserList, UserDict
 from typing import (Any, Callable, Collection, Dict, Mapping, Optional, Tuple, Type, Union)
 from uuid import UUID
 
@@ -57,14 +58,14 @@ class _ExtendedEncoder(json.JSONEncoder):
         return result
 
 
-class XmlListConfig(list):
+class XmlListConfig(UserList):
 
     def __init__(self, aList):
         for element in aList:
             self.append(XmlDictConfig(element))
 
 
-class XmlDictConfig(dict):
+class XmlDictConfig(UserDict):
     """
     Example usage:
 
@@ -203,12 +204,6 @@ class Var:
         if not _isinstance_safe(obj, type_):
             raise TypeError("%r is not a instance of %r" % (type(obj).__name__, self.type_.__name__))
         return True
-
-
-class ListVar(Var):
-    """ represant a series of vars
-    """
-    pass
 
 
 def var(type_,
@@ -455,7 +450,7 @@ class Declared(metaclass=BaseDeclared):
         >>>     tag = var(str)
         >>>     text = var(str)
         >>>     children = var(str)
-        >>>
+
         >>>     # attrs
         >>>     id = var(str)
         >>>     style = var(str)
@@ -491,6 +486,69 @@ class Declared(metaclass=BaseDeclared):
 
     def __hash__(self):
         return hash(tuple(str(getattr(self, f.name)) for f in fields(self)))
+
+
+__created_list_types = {}
+
+
+def new_list_type(type_):
+    if type_ in __created_list_types:
+        return __created_list_types[type_]
+    cls = type(f"DeclareList<{type_.__name__}>", (GenericList,), {"__type__": type_})
+    __created_list_types[type_] = cls
+    return cls
+
+
+class GenericList(UserList):
+    """ represant a series of vars
+
+    >>> class NewType(Declared):
+    >>>     items = var(new_list_type(str))
+
+    >>> result = NewType.from_json("{\"items\": [\"1\", \"2\"]}")
+    >>> result.to_json() #  {\"items\": [\"1\", \"2\"]}
+
+    or used directly
+
+    >>> strings = new_list_type(str)
+    >>> result = strings.from_json("[\"1\", \"2\"]")
+    >>> result.to_json() #  "[\"1\", \"2\"]"
+    """
+
+    __type__ = None
+
+    def __init__(self, initlist=None):
+        if self.__type__ is None:
+            raise TypeError(f"Type {self.__class__.__name__} cannot be intialize directly; please use new_list_type instead")
+
+        super().__init__(initlist)
+        # type checked
+        for item in self.data:
+            if type(item) is not self.__type__:
+                raise TypeError(f"Type of instance {str(item)} is {type(item)}, but not {self.__type__}.")
+
+    @classmethod
+    def from_json(cls: Type['DeclareList'],
+                  s: JsonData,
+                  *,
+                  encoding=None,
+                  parse_float=None,
+                  parse_int=None,
+                  parse_constant=None,
+                  **kw):
+        kvs = json.loads(
+            s, encoding=encoding, parse_float=parse_float, parse_int=parse_int, parse_constant=parse_constant, **kw)
+        return cls(kvs)
+
+    def to_json(self):
+        return json.dumps(self.data)
+
+    @classmethod
+    def from_xml(cls: Type['DeclareList'], xml_data):
+        raise NotImplementedError
+
+    def to_xml(self):
+        raise NotImplementedError
 
 
 def _tuple_str(obj_name, fields):
