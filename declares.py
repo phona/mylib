@@ -3,7 +3,7 @@ import inspect
 import json
 import re
 import urllib.parse as urlparse
-from collections import UserDict, UserList
+from collections import UserList
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
@@ -61,78 +61,6 @@ class _ExtendedEncoder(json.JSONEncoder):
         return result
 
 
-class XmlDictConfig(UserDict):
-    """
-    Example usage:
-
-    >>> tree = ET.parse('your_file.xml')
-    >>> root = tree.getroot()
-    >>> xmldict = XmlDictConfig(root)
-
-    Or, if you want to use an XML string:
-
-    >>> root = ET.XML("xml_string")
-    >>> xmldict = XmlDictConfig(root)
-
-    And then use xmldict for what it is... a dict.
-    """
-
-    class XmlListConfig(UserList):
-
-        def __init__(self, aList):
-            self.data = []
-            for element in aList:
-                self.append(XmlDictConfig(element))
-
-    empty_dict = {}
-
-    @classmethod
-    def from_xml_string(cls, string):
-        return cls(ET.XML(string))
-
-    def __init__(self, parent_element: ET.Element):
-        self.data = {}
-        if len(parent_element) > 1 and parent_element[0].tag == parent_element[1].tag:
-            self.data[parent_element.tag] = self.XmlListConfig(parent_element)
-        else:
-            if parent_element.items():
-                self.update(dict(parent_element.items()))
-
-            for element in parent_element:
-                if element:
-                    # treat like dict - we assume that if the first two tags
-                    # in a series are different, then they are all different.
-                    if len(element) == 1 or element[0].tag != element[1].tag:
-                        self.data = XmlDictConfig(element)
-                        self.update({element.tag: self.data})
-                    # treat like list - we assume that if the first two tags
-                    # in a series are the same, then the rest are the same.
-                    else:
-                        # here, we put the list in dictionary; the key is the
-                        # tag name the list elements all share in common, and
-                        # the value is the list itself
-                        self[element.tag] = self.XmlListConfig(element)
-                    # if the tag has attributes, add those to the dict
-                    if element.items():
-                        self.data.update(dict(element.items()))
-                        self.update({element.tag: self.data})
-                # this assumes that if you've got an attribute in a tag,
-                # you won't be having any text. This may or may not be a
-                # good idea -- time will tell. It works for the way we are
-                # currently doing XML configuration files...
-                elif element.items():
-                    self.update({element.tag: dict(element.items())})
-                # finally, if there are no child tags and no attributes, extract
-                # the text
-                else:
-                    if element.text is not None and element.text.startswith("<!"):
-                        result = CDATA_PATTERN.search(element.text)
-                        if result is not None:
-                            text = result.group(1)
-                            self.update({element.tag: text})
-                    self.update({element.tag: element.text})
-
-
 class NamingStyle:
     """ reference to python-stringcase
 
@@ -167,7 +95,8 @@ class Var:
                  default_factory=MISSING,
                  ignore_serialize=False,
                  naming_style=NamingStyle.snakecase,
-                 xml_attr=False,
+                 as_xml_attr=False,
+                 as_xml_text=False,
                  auto_cast=True,
                  init=True):
         self._type = type_
@@ -179,8 +108,10 @@ class Var:
         self.init = init
         self.ignore_serialize = ignore_serialize
         self.naming_style = naming_style
-        self.xml_attr = xml_attr
         self.auto_cast = auto_cast
+
+        self.as_xml_attr = as_xml_attr
+        self.as_xml_text = as_xml_text
 
     @property
     def field_name(self):
@@ -225,7 +156,8 @@ def var(type_,
         default_factory=MISSING,
         ignore_serialize=False,
         naming_style=NamingStyle.snakecase,
-        xml_attr=False,
+        as_xml_attr=False,
+        as_xml_text=False,
         auto_cast=True,
         init=True):
     """ check input arguments and create a Var object
@@ -260,8 +192,8 @@ def var(type_,
         raise ValueError('cannot specify both default and default_factory')
     if _isinstance_safe(naming_style, NamingStyle):
         raise TypeError(f'{type(naming_style)!r} is not instance of {NamingStyle!r}.')
-    return Var(type_, required, field_name, default, default_factory, ignore_serialize, naming_style, xml_attr,
-               auto_cast, init)
+    return Var(type_, required, field_name, default, default_factory, ignore_serialize, naming_style, as_xml_attr,
+               as_xml_text, auto_cast, init)
 
 
 class BaseDeclared(type):
@@ -414,7 +346,7 @@ class Declared(metaclass=BaseDeclared):
 
     @classmethod
     def from_dict(cls: Type['Declared'], kvs: dict):
-        return _decode_declared_class(cls, kvs)
+        return _decode_dict_to_declared_class(cls, kvs)
 
     def to_dict(self, encode_json=False, skip_none_field=False):
         return _asdict(self, encode_json=encode_json, skip_none_field=skip_none_field)
@@ -470,8 +402,11 @@ class Declared(metaclass=BaseDeclared):
         >>>     style = var(str)
         >>>     ......
         """
-        dct = XmlDictConfig(element)
-        return cls.from_dict(dct)
+        return _decode_xml_to_declared_class(cls, element)
+
+    @classmethod
+    def from_xml_string(cls: Type['Declared'], xml_string) -> ET.Element:
+        return cls.from_xml(ET.XML(xml_string))
 
     def to_xml(self, skip_none_field: bool = False) -> ET.Element:
         """
@@ -480,14 +415,38 @@ class Declared(metaclass=BaseDeclared):
             `text`
         </tag>
         """
-        attrs, dct = self._extract_attrs(skip_none_field)
-        return _asxml(dct, self.__class__.__name__.lower(), attrs)
+        # TODO
+        attr = {}
+        text = ""
+        children = []
+        for field in fields(self):
+            if field.as_xml_attr:
+                new_attr = getattr(self, field.name, None)
+                if new_attr:
+                    attr[field.field_name] = new_attr
+            elif field.as_xml_text:
+                text = getattr(self, field.name, "")
+            elif _issubclass_safe(field.type_, GenericList):
+                children.extend((sub.to_xml(skip_none_field) for sub in getattr(self, field.name, ())))
+            else:
+                elem = getattr(self, field.name, MISSING)
+                if elem is not MISSING:
+                    children.append(elem.to_xml(skip_none_field))
+
+        new_element = ET.Element(field.field_name, attr)
+        new_element.text = text
+        for c in children:
+            new_element.append(c)
+        return new_element
+
+    def to_xml_string(self, skip_none_field: bool = False) -> str:
+        return ET.tostring(self.to_xml(skip_none_field))
 
     def _extract_attrs(self, skip_none_field: bool) -> Tuple[Dict, Dict]:
         dct = self.to_dict(skip_none_field=skip_none_field)
         attrs = {}
         others = {}
-        attr_field_names = tuple(f.field_name for f in fields(self) if f.xml_attr)
+        attr_field_names = tuple(f.field_name for f in fields(self) if f.as_xml_attr)
         for k, v in dct.items():
             if k in attr_field_names:
                 attrs[k] = v
@@ -581,16 +540,12 @@ class GenericList(UserList):
                           **kw)
 
     @classmethod
-    def from_xml(cls: Type['DeclareList'], element: ET.Element) -> 'GenericList':
-        dct = XmlDictConfig(element)
-        keys = tuple(dct.keys())
-        print(keys)
-        if len(keys) > 1:
-            raise TypeError("can't decode multiple root xml")
-        elif len(keys) == 0:
-            raise TypeError("empty root")
+    def from_xml(cls: Type['GenericList'], element: ET.Element) -> 'GenericList':
+        return cls((cls.__type__.from_xml(sub) for sub in element), tag=element.tag)
 
-        return cls((cls.__type__.from_dict(item) for item in dct[keys[0]]), tag=keys[0])
+    @classmethod
+    def from_xml_string(cls: Type['GenericList'], xml_string) -> 'GenericList':
+        return cls.from_xml(ET.XML(xml_string))
 
     def to_xml(self, tag: str = None, skip_none_field: bool = False) -> ET.Element:
         if tag is None:
@@ -599,6 +554,9 @@ class GenericList(UserList):
         for item in self:
             root.append(item.to_xml(skip_none_field=skip_none_field))
         return root
+
+    def to_xml_string(self, tag: str = None, skip_none_field: bool = False) -> str:
+        return ET.tostring(self.to_xml(tag, skip_none_field))
 
     def __str__(self):
         return f"{self.__class__.__name__}({', '.join(str(i) for i in self)})"
@@ -659,11 +617,22 @@ def _is_new_type(type_):
     return inspect.isfunction(type_) and hasattr(type_, "__supertype__")
 
 
-def _decode_generic_list_class(cls: Type[GenericList], list_):
-    return cls(_decode_declared_class(cls.__type__, i) for i in list_)
+def _decode_xml_to_declared_class(cls: Type[Declared], element: ET.Element) -> Declared:
+    init_kwargs: Dict[str, Any] = {}
+    for field in fields(cls):
+        if field.as_xml_attr:
+            field_value = element.get(field.field_name, MISSING)
+        elif field.as_xml_text:
+            field_value = element.text
+        elif _issubclass_safe(field.type_, GenericList):
+            field_value = (field.type_.__type__.from_xml(sub) for sub in element)
+        else:
+            field_value = _decode_xml_to_declared_class(field.type_, element.find(field.field_name))
+        init_kwargs[field.name] = _cast_field_value(field, field_value)
+    return cls(**init_kwargs)
 
 
-def _decode_declared_class(cls: Type[Declared], kvs: Union['List', 'Dict']):
+def _decode_dict_to_declared_class(cls: Type[Declared], kvs: Union['List', 'Dict']):
     if _isinstance_safe(kvs, cls):
         return kvs
 
@@ -677,28 +646,34 @@ def _decode_declared_class(cls: Type[Declared], kvs: Union['List', 'Dict']):
         field_value = kvs.get(field.field_name, MISSING)
         if field_value is MISSING:
             field_value = field.make_default()
-            value = field_value
-        elif _issubclass_safe(field.type_, Declared):
-            value = _decode_declared_class(field.type_, field_value)
-        elif _issubclass_safe(field.type_, Decimal):
-            value = field_value if isinstance(field_value, Decimal) else Decimal(field_value)
-        elif _issubclass_safe(field.type_, UUID):
-            value = field_value if isinstance(field_value, UUID) else UUID(field_value)
-        elif _issubclass_safe(field.type_, datetime):
-            if _isinstance_safe(field_value, datetime):
-                dt = field_value
-            else:
-                tz = datetime.now(timezone.utc).astimezone().tzinfo
-                dt = datetime.fromtimestamp(field_value, tz=tz)
-            value = dt
-        elif type(field_value) != field.type_ and field.auto_cast and field:
-            value = field.type_(field_value)
-        else:
-            value = field_value
 
-        init_kwargs[field.name] = value
+        init_kwargs[field.name] = _cast_field_value(field, field_value)
 
     return cls(**init_kwargs)
+
+
+def _cast_field_value(field: Var, field_value: Any):
+    if field_value is MISSING:
+        return field_value
+
+    if _issubclass_safe(field.type_, Declared):
+        value = _decode_dict_to_declared_class(field.type_, field_value)
+    elif _issubclass_safe(field.type_, Decimal):
+        value = field_value if isinstance(field_value, Decimal) else Decimal(field_value)
+    elif _issubclass_safe(field.type_, UUID):
+        value = field_value if isinstance(field_value, UUID) else UUID(field_value)
+    elif _issubclass_safe(field.type_, datetime):
+        if _isinstance_safe(field_value, datetime):
+            dt = field_value
+        else:
+            tz = datetime.now(timezone.utc).astimezone().tzinfo
+            dt = datetime.fromtimestamp(field_value, tz=tz)
+        value = dt
+    elif type(field_value) != field.type_ and field.auto_cast and field:
+        value = field.type_(field_value)
+    else:
+        value = field_value
+    return value
 
 
 def _is_declared_instance(obj):
@@ -814,7 +789,7 @@ def _convert(key: str, obj: Dict) -> ET.ElementPath:
         # update attributes
         if v is None:
             pass
-        elif not isinstance(v, XmlDictConfig):
+        elif not isinstance(v, Dict):
             elem.set(k, str(v))
         else:
             sub_elem = _convert(k, v)

@@ -7,6 +7,7 @@ from declares import var, Declared, NamingStyle, new_list_type
 
 class DeclaredXmlSerializeTestCase(unittest.TestCase):
 
+    @unittest.skip("")
     def test_simple_use(self):
         xml_string = """
         <?xml version="1.0" encoding="utf-8"?>
@@ -33,14 +34,14 @@ class DeclaredXmlSerializeTestCase(unittest.TestCase):
         """.strip()
 
         class Neighbor(Declared):
-            name = var(str, xml_attr=True)
-            direction = var(str, xml_attr=True)
+            name = var(str, as_xml_attr=True)
+            direction = var(str, as_xml_attr=True)
 
         class Country(Declared):
             rank = var(str)
             year = var(int)
             gdppc = var(int)
-            name = var(str, xml_attr=True)
+            name = var(str, as_xml_attr=True)
             neighbor = var(Neighbor)
 
         Data = new_list_type(Country)
@@ -54,7 +55,6 @@ class DeclaredXmlSerializeTestCase(unittest.TestCase):
             '[{"rank": "1", "year": 2008, "gdppc": 141100, "name": "Liechtenstein", "neighbor": {"name": "Austria", "direction": "E"}}, {"rank": "4", "year": 2011, "gdppc": 59900, "name": "Singapore", "neighbor": {"name": "Malaysia", "direction": "N"}}, {"rank": "68", "year": 2011, "gdppc": 13600, "name": "Panama", "neighbor": {"name": "Costa Rica", "direction": "W"}}]'
         )
 
-    @unittest.skip("")
     def test_other_simple_use(self):
         xml_string = """
         <?xml version="1.0" encoding="utf-8"?>
@@ -82,17 +82,17 @@ class DeclaredXmlSerializeTestCase(unittest.TestCase):
         """.strip()
 
         class Item(Declared):
-            name = var(str, xml_attr=True)
-            item = var(str)
+            name = var(str, as_xml_attr=True)
+            text = var(str, as_xml_text=True)
 
         class Style(Declared):
-            name = var(str, xml_attr=True)
-            parent = var(str, xml_attr=True, init=False, required=False)
-            items = var(str, field_name="item")
+            name = var(str, as_xml_attr=True)
+            parent = var(str, as_xml_attr=True, init=False, required=False)
+            items = var(new_list_type(Item), field_name="item")
 
         Resource = new_list_type(Style)
-        data = Resource.from_xml(ET.fromstring(xml_string))
-        print(data)
+        data = Resource.from_xml_string(xml_string)
+        print(data.to_xml_string(skip_none_field=True))
 
 
 class NamingStyleTestCase(unittest.TestCase):
