@@ -1,7 +1,98 @@
 import unittest
 from datetime import datetime, timezone
+from xml.etree import ElementTree as ET
 
-from declares import var, Declared, NamingStyle
+from declares import var, Declared, NamingStyle, new_list_type
+
+
+class DeclaredXmlSerializeTestCase(unittest.TestCase):
+
+    def test_simple_use(self):
+        xml_string = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <data>
+            <country name="Liechtenstein">
+                <rank>1</rank>
+                <year>2008</year>
+                <gdppc>141100</gdppc>
+                <neighbor name="Austria" direction="E"/>
+            </country>
+            <country name="Singapore">
+                <rank>4</rank>
+                <year>2011</year>
+                <gdppc>59900</gdppc>
+                <neighbor name="Malaysia" direction="N"/>
+            </country>
+            <country name="Panama">
+                <rank>68</rank>
+                <year>2011</year>
+                <gdppc>13600</gdppc>
+                <neighbor name="Costa Rica" direction="W"/>
+            </country>
+        </data>
+        """.strip()
+
+        class Neighbor(Declared):
+            name = var(str, xml_attr=True)
+            direction = var(str, xml_attr=True)
+
+        class Country(Declared):
+            rank = var(str)
+            year = var(int)
+            gdppc = var(int)
+            name = var(str, xml_attr=True)
+            neighbor = var(Neighbor)
+
+        Data = new_list_type(Country)
+        data = Data.from_xml(ET.fromstring(xml_string))
+        self.assertEqual(
+            ET.tostring(data.to_xml()),
+            b'<data><country name="Liechtenstein"><rank>1</rank><year>2008</year><gdppc>141100</gdppc><neighbor direction="E" name="Austria" /></country><country name="Singapore"><rank>4</rank><year>2011</year><gdppc>59900</gdppc><neighbor direction="N" name="Malaysia" /></country><country name="Panama"><rank>68</rank><year>2011</year><gdppc>13600</gdppc><neighbor direction="W" name="Costa Rica" /></country></data>'
+        )
+        self.assertEqual(
+            data.to_json(),
+            '[{"rank": "1", "year": 2008, "gdppc": 141100, "name": "Liechtenstein", "neighbor": {"name": "Austria", "direction": "E"}}, {"rank": "4", "year": 2011, "gdppc": 59900, "name": "Singapore", "neighbor": {"name": "Malaysia", "direction": "N"}}, {"rank": "68", "year": 2011, "gdppc": 13600, "name": "Panama", "neighbor": {"name": "Costa Rica", "direction": "W"}}]'
+        )
+
+    @unittest.skip("")
+    def test_other_simple_use(self):
+        xml_string = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <resources>
+            <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
+                <item name="colorPrimary">@color/colorPrimary</item>
+                <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+                <item name="colorAccent">@color/colorAccent</item>
+            </style>
+
+            <style name="AppTheme.NoActionBar">
+                <item name="windowActionBar">false</item>
+                <item name="windowNoTitle">true</item>
+            </style>
+
+            <style name="AppTheme.AppBarOverlay" parent="ThemeOverlay.AppCompat.Dark.ActionBar" />
+            <style name="AppTheme.PopupOverlay" parent="ThemeOverlay.AppCompat.Light" />
+
+            <style name="ratingBarStyle" parent="@android:style/Widget.RatingBar">
+                <item name="android:progressDrawable">@drawable/ratingbar_drawable</item>
+                <item name="android:minHeight">48dip</item>
+                <item name="android:maxHeight">48dip</item>
+            </style>
+        </resources>
+        """.strip()
+
+        class Item(Declared):
+            name = var(str, xml_attr=True)
+            item = var(str)
+
+        class Style(Declared):
+            name = var(str, xml_attr=True)
+            parent = var(str, xml_attr=True, init=False, required=False)
+            items = var(str, field_name="item")
+
+        Resource = new_list_type(Style)
+        data = Resource.from_xml(ET.fromstring(xml_string))
+        print(data)
 
 
 class NamingStyleTestCase(unittest.TestCase):
