@@ -1,13 +1,47 @@
 import unittest
 from datetime import datetime, timezone
-from xml.etree import ElementTree as ET
 
 from declares import var, Declared, NamingStyle, new_list_type
 
 
+class QueryStringTestCase(unittest.TestCase):
+
+    def test_simple_use(self):
+        query_string = "crcat=test&crsource=test&crkw=buy-a-lot&crint=1&crfloat=1.2"
+
+        class Example(Declared):
+            crcat = var(str)
+            crsource = var(str)
+            crkw = var(str)
+            crint = var(int)
+            crfloat = var(float)
+
+        example = Example.from_query_string(query_string)
+        self.assertEqual(example.crint, 1)
+        self.assertEqual(example.crfloat, 1.2)
+        self.assertEqual(example.to_query_string(), query_string)
+
+
+class FormDataTestCase(unittest.TestCase):
+
+    def test_simple_use(self):
+        form_data = "crcat=test&crsource=test&crkw=buy-a-lot&crint=1&crfloat=1.2"
+
+        class Example(Declared):
+            crcat = var(str)
+            crsource = var(str)
+            crkw = var(str)
+            crint = var(int)
+            crfloat = var(float)
+
+        example = Example.from_form_data(form_data)
+        self.assertEqual(example.crint, 1)
+        self.assertEqual(example.crfloat, 1.2)
+        self.assertEqual(example.to_form_data(), form_data)
+
+
 class DeclaredXmlSerializeTestCase(unittest.TestCase):
 
-    @unittest.skip("")
     def test_simple_use(self):
         xml_string = """
         <?xml version="1.0" encoding="utf-8"?>
@@ -45,10 +79,10 @@ class DeclaredXmlSerializeTestCase(unittest.TestCase):
             neighbor = var(Neighbor)
 
         Data = new_list_type(Country)
-        data = Data.from_xml(ET.fromstring(xml_string))
+        data = Data.from_xml_string(xml_string)
         self.assertEqual(
-            ET.tostring(data.to_xml()),
-            b'<data><country name="Liechtenstein"><rank>1</rank><year>2008</year><gdppc>141100</gdppc><neighbor direction="E" name="Austria" /></country><country name="Singapore"><rank>4</rank><year>2011</year><gdppc>59900</gdppc><neighbor direction="N" name="Malaysia" /></country><country name="Panama"><rank>68</rank><year>2011</year><gdppc>13600</gdppc><neighbor direction="W" name="Costa Rica" /></country></data>'
+            data.to_xml_bytes(skip_none_field=True).decode(),
+            '<data><country name="Liechtenstein"><rank>1</rank><year>2008</year><gdppc>141100</gdppc><neighbor direction="E" name="Austria" /></country><country name="Singapore"><rank>4</rank><year>2011</year><gdppc>59900</gdppc><neighbor direction="N" name="Malaysia" /></country><country name="Panama"><rank>68</rank><year>2011</year><gdppc>13600</gdppc><neighbor direction="W" name="Costa Rica" /></country></data>'
         )
         self.assertEqual(
             data.to_json(),
@@ -92,7 +126,36 @@ class DeclaredXmlSerializeTestCase(unittest.TestCase):
 
         Resource = new_list_type(Style)
         data = Resource.from_xml_string(xml_string)
-        print(data.to_xml_string(skip_none_field=True))
+        self.assertEqual(
+            data.to_xml_bytes(skip_none_field=True).decode(),
+            '<resources><style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar"><item name="colorPrimary">@color/colorPrimary</item><item name="colorPrimaryDark">@color/colorPrimaryDark</item><item name="colorAccent">@color/colorAccent</item></style><style name="AppTheme.NoActionBar"><item name="windowActionBar">false</item><item name="windowNoTitle">true</item></style><style name="AppTheme.AppBarOverlay" parent="ThemeOverlay.AppCompat.Dark.ActionBar" /><style name="AppTheme.PopupOverlay" parent="ThemeOverlay.AppCompat.Light" /><style name="ratingBarStyle" parent="@android:style/Widget.RatingBar"><item name="android:progressDrawable">@drawable/ratingbar_drawable</item><item name="android:minHeight">48dip</item><item name="android:maxHeight">48dip</item></style></resources>'
+        )
+        self.assertEqual(
+            data.to_json(),
+            '[{"name": "AppTheme", "parent": "Theme.AppCompat.Light.DarkActionBar", "item": [{"name": "colorPrimary", "text": "@color/colorPrimary"}, {"name": "colorPrimaryDark", "text": "@color/colorPrimaryDark"}, {"name": "colorAccent", "text": "@color/colorAccent"}]}, {"name": "AppTheme.NoActionBar", "parent": null, "item": [{"name": "windowActionBar", "text": "false"}, {"name": "windowNoTitle", "text": "true"}]}, {"name": "AppTheme.AppBarOverlay", "parent": "ThemeOverlay.AppCompat.Dark.ActionBar", "item": []}, {"name": "AppTheme.PopupOverlay", "parent": "ThemeOverlay.AppCompat.Light", "item": []}, {"name": "ratingBarStyle", "parent": "@android:style/Widget.RatingBar", "item": [{"name": "android:progressDrawable", "text": "@drawable/ratingbar_drawable"}, {"name": "android:minHeight", "text": "48dip"}, {"name": "android:maxHeight", "text": "48dip"}]}]'
+        )
+
+    def test_declared_to_xml(self):
+        xml_string = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <person valid="true">
+            <name>John</name>
+            <age>18</age>
+        </person>
+        """.strip()
+
+        class Person(Declared):
+            valid = var(str, as_xml_attr=True)
+            name = var(str)
+            age = var(int)
+
+        one_person = Person.from_xml_string(xml_string)
+        self.assertEqual(one_person.name, "John")
+        self.assertEqual(one_person.valid, "true")
+        self.assertEqual(one_person.age, 18)
+        self.assertEqual(one_person.to_xml_bytes().decode(),
+                         '<person valid="true"><name>John</name><age>18</age></person>')
+        self.assertEqual(one_person.to_json(), '{"valid": "true", "name": "John", "age": 18}')
 
 
 class NamingStyleTestCase(unittest.TestCase):

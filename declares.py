@@ -182,6 +182,12 @@ def var(type_,
     :param default_factory: a callable object that can return a Type[A] object, as same as default parameter
                             but it is more flexible.
 
+    :param naming_style: a callable object, that can change naming style without redefined field name by `field_name` variable
+
+    :param as_xml_attr: a bool object, to declare one field as a xml attribute container
+
+    :param as_xml_text: a bool object, to declare one field as a xml text container
+
     :param ignore_serialize: a bool object, if it is True then will omit in serialize.
 
     :param init: a bool object, the parameter determines whether this variable will be initialize by default initializer.
@@ -190,8 +196,6 @@ def var(type_,
     """
     if default is not MISSING and default_factory is not MISSING:
         raise ValueError('cannot specify both default and default_factory')
-    if _isinstance_safe(naming_style, NamingStyle):
-        raise TypeError(f'{type(naming_style)!r} is not instance of {NamingStyle!r}.')
     return Var(type_, required, field_name, default, default_factory, ignore_serialize, naming_style, as_xml_attr,
                as_xml_text, auto_cast, init)
 
@@ -244,6 +248,8 @@ class Declared(metaclass=BaseDeclared):
     fields can use None object represent null or empty situation, otherwise those fields
     must be provided unless set it required as False.
     """
+
+    __xml_tag_name__ = ""
 
     def __init__(self, *args, **kwargs):
         kwargs.update(dict(zip(self.fields, args)))
@@ -415,39 +421,38 @@ class Declared(metaclass=BaseDeclared):
             `text`
         </tag>
         """
-        # TODO
-        root = ET.Element(self.__class__.__name__.lower())
+        tag = self.__xml_tag_name__ if self.__xml_tag_name__ else self.__class__.__name__.lower()
+        root = ET.Element(tag)
         for field in fields(self):
             if field.as_xml_attr:
+                # handle attributes
                 new_attr = getattr(self, field.name, None)
                 if new_attr:
                     root.set(field.field_name, new_attr)
             elif field.as_xml_text:
+                # handle has multiple attributes and text element, like <country size="large">Panama</country>
                 root.text = getattr(self, field.name, "")
             elif _issubclass_safe(field.type_, GenericList):
-                elem = getattr(self, field.name, MISSING)
-                if elem is not MISSING:
-                    root.extend(elem.to_xml(skip_none_field))
+                # handle a series of struct or native type data
+                field_value = getattr(self, field.name, MISSING)
+                if field_value is not MISSING:
+                    root.extend(field_value.to_xml(skip_none_field))
             elif _issubclass_safe(field.type_, Declared):
-                elem = getattr(self, field.name, MISSING)
-                if elem is not MISSING:
-                    root.append(elem.to_xml(skip_none_field))
+                # handle complex struct data
+                field_value = getattr(self, field.name, MISSING)
+                if field_value is not MISSING:
+                    root.append(field_value.to_xml(skip_none_field))
+            else:
+                # handle simple node just like <name>John</name>
+                field_value = getattr(self, field.name, None)
+                if field_value is not None:
+                    elem = ET.Element(field.field_name)
+                    elem.text = field_value
+                    root.append(elem)
         return root
 
-    def to_xml_string(self, skip_none_field: bool = False) -> str:
-        return ET.tostring(self.to_xml(skip_none_field))
-
-    def _extract_attrs(self, skip_none_field: bool) -> Tuple[Dict, Dict]:
-        dct = self.to_dict(skip_none_field=skip_none_field)
-        attrs = {}
-        others = {}
-        attr_field_names = tuple(f.field_name for f in fields(self) if f.as_xml_attr)
-        for k, v in dct.items():
-            if k in attr_field_names:
-                attrs[k] = v
-            else:
-                others[k] = v
-        return attrs, others
+    def to_xml_bytes(self, skip_none_field: bool = False, **kwargs) -> bytes:
+        return ET.tostring(self.to_xml(skip_none_field), **kwargs)
 
     def __str__(self):
         args = [f"{var.name}={str(getattr(self, var.name, 'missing'))}" for _, var in self.meta["vars"].items()]
@@ -550,8 +555,8 @@ class GenericList(UserList):
             root.append(item.to_xml(skip_none_field=skip_none_field))
         return root
 
-    def to_xml_string(self, tag: str = None, skip_none_field: bool = False) -> str:
-        return ET.tostring(self.to_xml(tag, skip_none_field))
+    def to_xml_bytes(self, tag: str = None, skip_none_field: bool = False, **kwargs) -> bytes:
+        return ET.tostring(self.to_xml(tag, skip_none_field), **kwargs)
 
     def __str__(self):
         return f"{self.__class__.__name__}({', '.join(str(i) for i in self)})"
@@ -621,8 +626,10 @@ def _decode_xml_to_declared_class(cls: Type[Declared], element: ET.Element) -> D
             field_value = element.text
         elif _issubclass_safe(field.type_, GenericList):
             field_value = (field.type_.__type__.from_xml(sub) for sub in element)
-        else:
+        elif _issubclass_safe(field.type_, Declared):
             field_value = _decode_xml_to_declared_class(field.type_, element.find(field.field_name))
+        else:
+            field_value = element.find(field.field_name).text
         init_kwargs[field.name] = _cast_field_value(field, field_value)
     return cls(**init_kwargs)
 
@@ -665,14 +672,19 @@ def _cast_field_value(field: Var, field_value: Any):
             dt = datetime.fromtimestamp(field_value, tz=tz)
         value = dt
     elif type(field_value) != field.type_ and field.auto_cast and field:
-        value = field.type_(field_value)
+        try:
+            value = field.type_(field_value)
+        except ValueError as why:
+            raise ValueError(
+                f"{why}: field {field.name} does't support cast type {type(field_value)} to {field.type_},"
+                f"if you want to avoid this cast in here just turn off `auto_cast` when you define this variable.")
     else:
         value = field_value
     return value
 
 
 def _is_declared_instance(obj):
-    return isinstance(obj, Declared)
+    return _isinstance_safe(obj, Declared)
 
 
 def fields(class_or_instance):
@@ -755,38 +767,3 @@ def _asdict(obj, encode_json=False, skip_none_field=False):
         return list(_asdict(v, encode_json=encode_json) for v in obj)
     else:
         return copy.deepcopy(obj)
-
-
-def _asxml(obj: dict, tag: str, attrib: Dict = {}) -> ET.Element:
-    """
-    :param obj: a dictionary object, root element children
-    :tag str: root element tag name
-    :param attrs: a dictionary object, root element attributes
-    :return: ET.Element
-    """
-    root = ET.Element(tag, attrib)
-    for k, v in obj.items():
-        if isinstance(v, Dict):
-            elem = _convert(k, v)
-        else:
-            elem = ET.Element(k)
-            elem.text = v
-        root.append(elem)
-    return root
-
-
-def _convert(key: str, obj: Dict) -> ET.ElementPath:
-    if not isinstance(obj, Dict):
-        raise TypeError('Only support dict type as element\'s attribute: %s (%s)' % (obj, type(obj).__name__))
-
-    elem = ET.Element(key)
-    for k, v in obj.items():
-        # update attributes
-        if v is None:
-            pass
-        elif not isinstance(v, Dict):
-            elem.set(k, str(v))
-        else:
-            sub_elem = _convert(k, v)
-            elem.append(sub_elem)
-    return elem
