@@ -87,7 +87,7 @@ class DeclaredXmlSerializeTestCase(unittest.TestCase):
 
         class Style(Declared):
             name = var(str, as_xml_attr=True)
-            parent = var(str, as_xml_attr=True, init=False, required=False)
+            parent = var(str, as_xml_attr=True, default=None)
             items = var(new_list_type(Item), field_name="item")
 
         Resource = new_list_type(Style)

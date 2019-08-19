@@ -416,28 +416,23 @@ class Declared(metaclass=BaseDeclared):
         </tag>
         """
         # TODO
-        attr = {}
-        text = ""
-        children = []
+        root = ET.Element(self.__class__.__name__.lower())
         for field in fields(self):
             if field.as_xml_attr:
                 new_attr = getattr(self, field.name, None)
                 if new_attr:
-                    attr[field.field_name] = new_attr
+                    root.set(field.field_name, new_attr)
             elif field.as_xml_text:
-                text = getattr(self, field.name, "")
+                root.text = getattr(self, field.name, "")
             elif _issubclass_safe(field.type_, GenericList):
-                children.extend((sub.to_xml(skip_none_field) for sub in getattr(self, field.name, ())))
-            else:
                 elem = getattr(self, field.name, MISSING)
                 if elem is not MISSING:
-                    children.append(elem.to_xml(skip_none_field))
-
-        new_element = ET.Element(field.field_name, attr)
-        new_element.text = text
-        for c in children:
-            new_element.append(c)
-        return new_element
+                    root.extend(elem.to_xml(skip_none_field))
+            elif _issubclass_safe(field.type_, Declared):
+                elem = getattr(self, field.name, MISSING)
+                if elem is not MISSING:
+                    root.append(elem.to_xml(skip_none_field))
+        return root
 
     def to_xml_string(self, skip_none_field: bool = False) -> str:
         return ET.tostring(self.to_xml(skip_none_field))
