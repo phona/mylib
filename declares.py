@@ -254,26 +254,29 @@ class Declared(metaclass=BaseDeclared):
     def __init__(self, *args, **kwargs):
         kwargs.update(dict(zip(self.fields, args)))
         fs = fields(self)
+        omits = {}
         for field in fs:
+            field_value = kwargs.get(field.name, MISSING)
+
             # set `init` to False but `required` is True, that mean is this variable must be init in later
             # otherwise seiralize will be failed.
             # `init` just tell Declared class use custom initializer instead of default initializer.
             if not field.init:
+                if field_value is not MISSING:
+                    omits[field.name] = field_value
                 continue
-
-            field_value = kwargs.get(field.name, MISSING)
 
             if field_value is MISSING:
                 field_value = field.make_default()
-                if field_value is MISSING:
+                if field_value is MISSING and field.required:
                     raise AttributeError(
                         f"field {field.name!r} is required. if you doesn't want to init this variable in initializer, "
                         f"please set `init` argument to False for this variable.")
             super().__setattr__(field.name, field_value)
 
-        self.__post_init__()
+        self.__post_init__(**omits)
 
-    def __post_init__(self):
+    def __post_init__(self, **omits):
         """"""
 
     def __setattr__(self, name, value):
@@ -676,7 +679,7 @@ def _cast_field_value(field: Var, field_value: Any):
             value = field.type_(field_value)
         except ValueError as why:
             raise ValueError(
-                f"{why}: field {field.name} does't support cast type {type(field_value)} to {field.type_},"
+                f"{why}: field {field.name} does't support cast type {type(field_value)}({field_value!r}) to {field.type_},"
                 f"if you want to avoid this cast in here just turn off `auto_cast` when you define this variable.")
     else:
         value = field_value

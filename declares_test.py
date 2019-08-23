@@ -203,6 +203,62 @@ class NamingStyleTestCase(unittest.TestCase):
 
 class VarTestCase(unittest.TestCase):
 
+    def test_post_init_case_1(self):
+        class Klass(Declared):
+            a = var(int)
+            b = var(int)
+            c = var(int, init=False)
+
+            def __post_init__(self):
+                self.c = self.a + self.b
+
+        inst = Klass(1, 2)
+        self.assertEqual(inst.a, 1)
+        self.assertEqual(inst.b, 2)
+        self.assertEqual(inst.c, 3)
+
+    def test_post_init_case_2(self):
+        class Klass(Declared):
+            a = var(int)
+            b = var(int)
+            c = var(int, init=False)
+
+            def __post_init__(self, c):
+                self.c = c + 1
+
+        inst = Klass(1, 2, 3)
+        self.assertEqual(inst.a, 1)
+        self.assertEqual(inst.b, 2)
+        self.assertEqual(inst.c, 4)
+
+    def test_post_init_case_3(self):
+        class Klass(Declared):
+            a = var(int)
+            b = var(int)
+            c = var(int, init=False, required=False)
+
+            def __post_init__(self, c):
+                self.c = c + 1
+
+        inst = Klass(1, 2, 3)
+        self.assertEqual(inst.a, 1)
+        self.assertEqual(inst.b, 2)
+        self.assertEqual(inst.c, 4)
+
+    def test_post_init_case_4(self):
+        class Klass(Declared):
+            a = var(int)
+            b = var(int)
+            c = var(int, init=False, required=False)
+
+            def __post_init__(self):
+                self.c = self.a + self.b
+
+        inst = Klass(1, 2)
+        self.assertEqual(inst.a, 1)
+        self.assertEqual(inst.b, 2)
+        self.assertEqual(inst.c, 3)
+
     def test_default_params(self):
 
         class Klass(Declared):
@@ -224,8 +280,6 @@ class VarTestCase(unittest.TestCase):
 
         class Klass(Declared):
             a = var(int, required=False)
-
-        self.assertRaises(AttributeError, Klass)
 
         i2 = Klass(1)
         self.assertEqual(i2.a, 1)
@@ -370,8 +424,6 @@ class ComplexVarTestCase(unittest.TestCase):
 
         class Klass(Declared):
             a = var(int, required=False, ignore_serialize=True)
-
-        self.assertRaises(AttributeError, Klass)
 
         i2 = Klass(1)
         self.assertEqual(i2.a, 1)
