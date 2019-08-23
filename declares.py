@@ -7,6 +7,7 @@ from collections import UserList
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
+from functools import partial
 from typing import (Any, Callable, Collection, Dict, List, Mapping, Optional, Tuple, Type, Union)
 from uuid import UUID
 from xml.etree import ElementTree as ET
@@ -80,6 +81,13 @@ class NamingStyle:
         if not string:
             return string
         return string[0].lower() + re.sub(r"[A-Z]", lambda matched: '_' + (matched.group(0)).lower(), string[1:])
+
+    @classmethod
+    def pascalcase(cls, string):
+        string = cls.camelcase(string)
+        if not string:
+            return string
+        return string[0].upper() + string[1:]
 
 
 class Var:
@@ -198,6 +206,10 @@ def var(type_,
         raise ValueError('cannot specify both default and default_factory')
     return Var(type_, required, field_name, default, default_factory, ignore_serialize, naming_style, as_xml_attr,
                as_xml_text, auto_cast, init)
+
+
+pascalcase_var = partial(var, naming_style=NamingStyle.pascalcase)
+camelcase_var = partial(var, naming_style=NamingStyle.camelcase)
 
 
 class BaseDeclared(type):
@@ -547,6 +559,10 @@ class GenericList(UserList):
         return cls((cls.__type__.from_xml(sub) for sub in element), tag=element.tag)
 
     @classmethod
+    def from_xml_list(cls: Type['GenericList'], elements: List[ET.Element], tag) -> 'GenericList':
+        return cls((cls.__type__.from_xml(sub) for sub in elements), tag=tag)
+
+    @classmethod
     def from_xml_string(cls: Type['GenericList'], xml_string) -> 'GenericList':
         return cls.from_xml(ET.XML(xml_string))
 
@@ -628,9 +644,13 @@ def _decode_xml_to_declared_class(cls: Type[Declared], element: ET.Element) -> D
         elif field.as_xml_text:
             field_value = element.text
         elif _issubclass_safe(field.type_, GenericList):
-            field_value = (field.type_.__type__.from_xml(sub) for sub in element)
+            subs = element.findall(field.field_name)
+            field_value = field.type_.from_xml_list(subs, element.tag)
         elif _issubclass_safe(field.type_, Declared):
-            field_value = _decode_xml_to_declared_class(field.type_, element.find(field.field_name))
+            sub = element.find(field.field_name)
+            if sub is None:
+                sub = MISSING
+            field_value = field.type_.from_xml(sub)
         else:
             field_value = element.find(field.field_name).text
         init_kwargs[field.name] = _cast_field_value(field, field_value)

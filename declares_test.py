@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 
-from declares import var, Declared, NamingStyle, new_list_type
+from declares import var, Declared, NamingStyle, new_list_type, pascalcase_var
 
 
 class QueryStringTestCase(unittest.TestCase):
@@ -157,6 +157,109 @@ class DeclaredXmlSerializeTestCase(unittest.TestCase):
                          '<person valid="true"><name>John</name><age>18</age></person>')
         self.assertEqual(one_person.to_json(), '{"valid": "true", "name": "John", "age": 18}')
 
+    def test_c2_xml(self):
+        xml_string = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <ADI xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+            <Objects>
+                <Object Action="REGIST" Code="PIC10100000140047ylxy" ID="PIC10100000140047ylxy" ElementType="Picture">
+                    <Property Name="FileURL">ftp://ybs:ybs123@10.61.252.53/picture/hui_ben_gong_she/wa_wa_ai_mao_xian_.jpg</Property>
+                    <Property Name="Description">无</Property>
+                </Object>
+                <Object Action="REGIST" Code="PRO10100000140047ylxy" ID="PRO10100000140047ylxy" ElementType="Program">
+                    <Property Name="Type">5</Property>
+                    <Property Name="Provide">未知</Property>
+                    <Property Name="Name">拯救计划</Property>
+                    <Property Name="SeriesName">娃娃爱冒险</Property>
+                    <Property Name="LicensingWindowStart">20190101201959</Property>
+                    <Property Name="LicensingWindowEnd">20991231202019</Property>
+                    <Property Name="AuthType">1</Property>
+                    <Property Name="AuthChannel">0</Property>
+                    <Property Name="SearchName">wwamx</Property>
+                    <Property Name="Genre">Genre</Property>
+                    <Property Name="WriterDisplay">未知</Property>
+                    <Property Name="WriterSearchName">wwamx</Property>
+                    <Property Name="OriginalCountry">中国</Property>
+                    <Property Name="Language">普通话</Property>
+                    <Property Name="ReleaseYear">2019</Property>
+                    <Property Name="OrgAirDate">20190101</Property>
+                    <Property Name="DisplayAsNew">0</Property>
+                    <Property Name="DisplayAsLastChance">999</Property>
+                    <Property Name="Macrovision">0</Property>
+                    <Property Name="Description">欢乐宝宝是一部以儿童形象为主题的动漫，主角是欢欢、乐乐、豆豆、团团、圆圆5个性格特征各异的可爱动画形象，以少年儿童在生活学习中遇到各种习惯、常识、科普知识等丰富资源作为创作题材。</Property>
+                    <Property Name="Status">1</Property>
+                    <Property Name="SourceType">1</Property>
+                    <Property Name="SeriesFlag">1</Property>
+                    <Property Name="SeriesItemNo">32</Property>
+                    <Property Name="Keywords">教育</Property>
+                    <Property Name="Tags">教育</Property>
+                    <Property Name="StorageType">1</Property>
+                    <Property Name="DefinitionFlag">1</Property>
+                    <Property Name="MobileLicense">1</Property>
+                </Object>
+                <Object Action="REGIST" Code="MOV10100000140047ylxy" ID="MOV10100000140047ylxy" ElementType="Movie">
+                    <Property Name="Type">1</Property>
+                    <Property Name="FileURL">ftp://ybs:ybs123@10.61.252.53/201906/hbgs/wwamx/10100000140047.ts</Property>
+                    <Property Name="SourceDRMType">0</Property>
+                    <Property Name="DestDRMType">0</Property>
+                    <Property Name="AudioType">1</Property>
+                    <Property Name="ClosedCaptioning">1</Property>
+                    <Property Name="VideoType">4</Property>
+                    <Property Name="AudioFormat">3</Property>
+                    <Property Name="Resolution">8</Property>
+                    <Property Name="VideoProfile">5</Property>
+                    <Property Name="SystemLayer">1</Property>
+                    <Property Name="ServiceType">0x01</Property>
+                </Object>
+            </Objects>
+            <Mappings>
+                <Mapping ElementCode="PRO10100000140047ylxy" ElementID="PRO10100000140047ylxy" ElementType="Program" ParentType="Picture" ParentCode="PIC10100000140047ylxy" ParentID="PIC10100000140047ylxy" Action="REGIST">
+                    <Property Name="Type">1</Property>
+                </Mapping>
+                <Mapping ElementCode="PRO10100000140047ylxy" ElementID="PRO10100000140047ylxy" ElementType="Program" ParentType="Series" ParentCode="SERwwamxylxy" ParentID="SERwwamxylxy" Action="REGIST">
+                    <Property Name="Sequence">32</Property>
+                </Mapping>
+                <Mapping ElementCode="MOV10100000140047ylxy" ElementID="MOV10100000140047ylxy" ElementType="Movie" ParentType="Program" ParentCode="PRO10100000140047ylxy" ParentID="PRO10100000140047ylxy" Action="REGIST"/>
+            </Mappings>
+        </ADI>
+        """.strip()
+
+        class Property(Declared):
+            name = pascalcase_var(str, as_xml_attr=True)
+            value = var(str, as_xml_text=True)
+
+        class Object(Declared):
+            action = pascalcase_var(str, as_xml_attr=True)
+            code = pascalcase_var(str, as_xml_attr=True)
+            id_ = var(str, field_name="ID", as_xml_attr=True)
+            element_type = pascalcase_var(str, as_xml_attr=True)
+
+            properties = var(new_list_type(Property), field_name="Property")
+
+        class Mapping(Declared):
+            element_code = pascalcase_var(str, as_xml_attr=True)
+            element_id = var(str, as_xml_attr=True, field_name="ElementID")
+            element_type = pascalcase_var(str, as_xml_attr=True)
+            parent_type = pascalcase_var(str, as_xml_attr=True)
+            parent_code = pascalcase_var(str, as_xml_attr=True)
+            parent_id = var(str, as_xml_attr=True, field_name="ParentID")
+            action = pascalcase_var(str, as_xml_attr=True)
+
+            properties = var(new_list_type(Property), field_name="Property")
+
+        class Objects(Declared):
+            object_ = var(new_list_type(Object), field_name="Object")
+
+        class Mappings(Declared):
+            mapping = var(new_list_type(Mapping), field_name="Mapping")
+
+        class ADI(Declared):
+            objects = pascalcase_var(Objects)
+            mappings = pascalcase_var(Mappings)
+
+        adi = ADI.from_xml_string(xml_string)
+        print(adi.to_json())
+
 
 class NamingStyleTestCase(unittest.TestCase):
 
@@ -204,6 +307,7 @@ class NamingStyleTestCase(unittest.TestCase):
 class VarTestCase(unittest.TestCase):
 
     def test_post_init_case_1(self):
+
         class Klass(Declared):
             a = var(int)
             b = var(int)
@@ -218,6 +322,7 @@ class VarTestCase(unittest.TestCase):
         self.assertEqual(inst.c, 3)
 
     def test_post_init_case_2(self):
+
         class Klass(Declared):
             a = var(int)
             b = var(int)
@@ -232,6 +337,7 @@ class VarTestCase(unittest.TestCase):
         self.assertEqual(inst.c, 4)
 
     def test_post_init_case_3(self):
+
         class Klass(Declared):
             a = var(int)
             b = var(int)
@@ -246,6 +352,7 @@ class VarTestCase(unittest.TestCase):
         self.assertEqual(inst.c, 4)
 
     def test_post_init_case_4(self):
+
         class Klass(Declared):
             a = var(int)
             b = var(int)
