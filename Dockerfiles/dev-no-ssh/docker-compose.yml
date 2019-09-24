@@ -1,0 +1,17 @@
+version: '3'
+services:
+  developenv:
+    image: taotaotao/ubox-developenv:latest
+    volumes:
+      - .:/root/developenv
+    ports:
+      - "10086:22"
+    depends_on:
+      - mysql
+
+  mysql:
+    image: mysql:latest
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+    ports:
+      - "13306:3306"
