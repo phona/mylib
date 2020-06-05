@@ -2,7 +2,7 @@ astroid==2.2.5
 colorama==0.4.1
 dataclasses==0.6
 dataclasses-json==0.2.13
-Django==1.11.8
+Django==1.11.29
 django-sortedm2m==1.5.0
 entrypoints==0.3
 et-xmlfile==1.0.1
@@ -41,7 +41,7 @@ astroid==2.2.5
 colorama==0.4.1
 dataclasses==0.6
 dataclasses-json==0.2.13
-Django==1.11.8
+Django==1.11.29
 django-sortedm2m==1.5.0
 entrypoints==0.3
 et-xmlfile==1.0.1
